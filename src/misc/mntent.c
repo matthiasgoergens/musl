@@ -37,24 +37,18 @@ static char* decode(char* buf) {
 		}
 		src++;
 
-		const char *replacements =
-			"\040"	"040"	"\0"  // space
-			"\011"	"011"	"\0"  // tab
-			"\012"	"012"	"\0"  // newline
-			"\134"	"134"	"\0"  // backslash
-			"\\"	"\\"	"\0"
-			// Fallback for unrecognized escape sequence,
-			// copy literally:
-			"\\"	"";
-		while(1) {
-			char c = *replacements++;
-			size_t n = strlen(replacements);
-			if (strncmp(src, replacements, n) == 0) {
-				*dest++ = c;
-				src += n;
-				break;
-			}
-			replacements += n+1;
+		if('0' <= src[0] && src[0] < '2' &&
+		   '0' <= src[1] && src[1] < '8' &&
+		   '0' <= src[2] && src[2] < '8') {
+			*dest++ = (src[0] - '0') << 6
+			        | (src[1] - '0') << 3
+			        | (src[2] - '0') << 0;
+			src += 3;
+		} else if (src[0] == '\\') {
+			*dest++ = '\\';
+			src += 1;
+		} else {
+			*dest++ = '\\';
 		}
 	}
 }
@@ -108,36 +102,33 @@ struct mntent *getmntent(FILE *f)
 	return getmntent_r(f, &mnt, SENTINEL, 0);
 }
 
-static int escape_and_write_string(FILE *f, const char* str)
+static void escape_and_write_string(FILE *f, const char* str)
 {
-	const char* replace_me = "\040\011\012\\";
 	char c;
-	int error_occured = 0;
-	while(str && !error_occured && (c = *str++) != 0) {
-		if (NULL == strchr(replace_me, c)) {
-			error_occured = putc_unlocked(c, f) < 0;
+	while((c = *str++) != 0) {
+		if (NULL == strchr(" \t\n\\", c)) {
+			putc_unlocked(c, f);
 		} else {
-			error_occured =
-				(0 > putc_unlocked('\\', f))
-				|| (0 > putc_unlocked('0' + (3 & (c >> 6)), f))
-				|| (0 > putc_unlocked('0' + (7 & (c >> 3)), f))
-				|| (0 > putc_unlocked('0' + (7 & (c >> 0)), f));
+			putc_unlocked('\\', f);
+			putc_unlocked('0' + (3 & (c >> 6)), f);
+			putc_unlocked('0' + (7 & (c >> 3)), f);
+			putc_unlocked('0' + (7 & (c >> 0)), f);
 		}
 	}
-	return error_occured || (0 > putc_unlocked('\t', f));
+	putc_unlocked('\t', f);
 }
 
 int addmntent(FILE *f, const struct mntent *mnt)
 {
 	if (fseek(f, 0, SEEK_END)) return 1;
 	FLOCK(f);
-	int error_occured =
-		escape_and_write_string(f, mnt->mnt_fsname)
-		|| escape_and_write_string(f, mnt->mnt_dir)
-		|| escape_and_write_string(f, mnt->mnt_type)
-		|| escape_and_write_string(f, mnt->mnt_opts)
-		|| (0 > fprintf(f, "%d\t%d\n",
-			mnt->mnt_freq, mnt->mnt_passno));
+	escape_and_write_string(f, mnt->mnt_fsname);
+	escape_and_write_string(f, mnt->mnt_dir);
+	escape_and_write_string(f, mnt->mnt_type);
+	escape_and_write_string(f, mnt->mnt_opts);
+	fprintf(f, "%d\t%d\n",
+		mnt->mnt_freq, mnt->mnt_passno);
+	int error_occured = ferror(f);
 	FUNLOCK(f);
 	return error_occured;
 }
