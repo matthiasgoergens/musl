@@ -65,21 +65,29 @@ struct mntent *getmntent_r(FILE *f, struct mntent *mnt, char *linebuf, int bufle
 	mnt->mnt_passno = 0;
 
 	do {
-		if (use_internal) {
-			getline(&internal_buf, &internal_bufsize, f);
-			linebuf = internal_buf;
-		} else {
-			fgets(linebuf, buflen, f);
-		}
-		if (feof(f) || ferror(f)) return 0;
-		if (!strchr(linebuf, '\n')) {
-			fscanf(f, "%*[^\n]%*[\n]");
-			errno = ERANGE;
-			return 0;
-		}
+		do {
+			if (use_internal) {
+				getline(&internal_buf, &internal_bufsize, f);
+				linebuf = internal_buf;
+			} else {
+				fgets(linebuf, buflen, f);
+			}
+			if (feof(f) || ferror(f)) return 0;
+			if (!strchr(linebuf, '\n')) {
+				fscanf(f, "%*[^\n]%*[\n]");
+				errno = ERANGE;
+				return 0;
+			}
+			len = strlen(linebuf);
+			// In theory, with `use_internal` we could read a line longer than
+			// INT_MAX.  But we don't want to incentivise using the legacy
+			// thread-unsafe API (`getmntent`).
 
-		len = strlen(linebuf);
-		if (len > INT_MAX) continue;
+			// The thread-safe API of getmntent_r only supports lengths up to
+			// INT_MAX, because of `int buflen` in the function signature.
+
+			// As a compromise, we skip extremely long lines.
+		} while (len >= INT_MAX);
 		for (i = 0; i < sizeof n / sizeof *n; i++) n[i] = len;
 		sscanf(linebuf, " %n%*[^ \t]%n %n%*[^ \t]%n %n%*[^ \t]%n %n%*[^ \t]%n %d %d",
 			n, n+1, n+2, n+3, n+4, n+5, n+6, n+7,
